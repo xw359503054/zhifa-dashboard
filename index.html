@@ -501,11 +501,7 @@ async function init() {
   applyFilters();
   // 数据更新时间：优先用 data.json 里记录的真实一键更新时间，其次用 localStorage 缓存时间
   var displayTime = hasSaved ? savedTime : (dataUpdateTime || '--');
-<<<<<<< HEAD
-  document.getElementById('lastUpdate').textContent = '数据更新时间: ' + displayTime + ' | 数据源: ' + sourceLabel + ' | 总记录: ' + allData.length + ' | 工厂: ' + Object.keys(allData.reduce(function(m,d){m[d['工厂代码']]=1;return m;},{})).sort().join(',');
-=======
   document.getElementById('lastUpdate').textContent = '数据更新时间: ' + displayTime + ' | 总记录: ' + allData.length + ' | 工厂: ' + Object.keys(allData.reduce(function(m,d){m[d['工厂代码']]=1;return m;},{})).sort().join(',');
->>>>>>> c32cd5a (auto-sync: server update 2026-07-29 06:55)
 
   // 从第一条记录的 key 中提取质检率（表格列头格式："质检率3.24%"）
   if (allData.length > 0) {
