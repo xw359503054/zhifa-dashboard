@@ -97,19 +97,19 @@ try {
 
     # 推送到 GitHub（带重试：网络问题重试，冲突则自动 rebase+解决冲突）
     function Push-WithRetry {
-        param($gitPath)
+        param($gitPath, [string]$remoteName = 'origin')
         $maxTries = 3
         for ($i = 1; $i -le $maxTries; $i++) {
             if ($i -gt 1) {
                 Write-Host ('   Retry ' + ($i) + '/' + $maxTries + ' after 5s...')
                 Start-Sleep -Seconds 5
             }
-            $output = & $gitPath push origin main 2>&1
+            $output = & $gitPath push $remoteName main 2>&1
             if ($LASTEXITCODE -eq 0) { return $true }
             # 如果远程有新提交导致冲突，先 rebase 再重试
             if ($output -match 'rejected') {
-                Write-Host '   Remote has newer commits, pulling & rebasing...'
-                & $gitPath pull --rebase origin main 2>&1 | Out-Null
+                Write-Host ('   [' + $remoteName + '] remote has newer commits, pulling & rebasing...')
+                & $gitPath pull --rebase $remoteName main 2>&1 | Out-Null
                 # 检查 rebase 是否因冲突卡住（data.json 被两边同时修改）
                 $rebaseDir = Join-Path $deploy '.git/rebase-merge'
                 $rebaseApply = Join-Path $deploy '.git/rebase-apply'
@@ -127,31 +127,50 @@ try {
                         return $false
                     }
                 }
-                $output = & $gitPath push origin main 2>&1
+                $output = & $gitPath push $remoteName main 2>&1
                 if ($LASTEXITCODE -eq 0) { return $true }
             }
         }
         return $false
     }
 
+    # 推送指定远程（带重试），输出明确的成功/失败状态
+    function Push-ToRemote {
+        param($gitPath, [string]$remoteName, [string]$label, [string]$successUrl)
+        Write-Host ('   Pushing to ' + $label + '...')
+        $ok = Push-WithRetry $gitPath $remoteName
+        if ($ok) {
+            Write-Host ('   [OK] ' + $label + ' push succeeded')
+            if ($successUrl) { Write-Host ('        ' + $successUrl) }
+        } else {
+            Write-Host ('   [FAIL] ' + $label + ' push failed after 3 retries')
+        }
+        return $ok
+    }
+
     if ($commitOk) {
         Write-Host '   [4/4] Push to GitHub...'
-        $pushOk = Push-WithRetry $gitExe
+        Push-Location $deploy
+        $results = @{}
+        $results['github'] = Push-ToRemote $gitExe 'origin' 'GitHub' 'https://zhongshanms.github.io/zhifa-dashboard/'
+        $results['server'] = Push-ToRemote $gitExe 'server' '宝塔服务器' 'https://dashboard.zhongshanzhiliang.top/'
         Pop-Location
 
-        if ($pushOk) {
-            Write-Host ''
-            Write-Host '   ========================================'
-            Write-Host '   [SUCCESS] Pushed to GitHub!'
-            Write-Host '   https://zhongshanms.github.io/zhifa-dashboard/'
-            Write-Host '   ========================================'
+        Write-Host ''
+        Write-Host '   ========================================'
+        if ($results['github'] -and $results['server']) {
+            Write-Host '   [SUCCESS] Pushed to all destinations!'
+        } elseif ($results['github']) {
+            Write-Host '   [PARTIAL] Pushed to GitHub only'
+            Write-Host '   宝塔服务器推送失败，但数据已提交到服务器Git仓库'
+            Write-Host '   可手动执行: git push server main'
+        } elseif ($results['server']) {
+            Write-Host '   [PARTIAL] Pushed to 宝塔服务器 only'
         } else {
-            Write-Host ''
-            Write-Host '   ========================================'
-            Write-Host '   [FAILED] Push failed after 3 retries!'
+            Write-Host '   [FAILED] All pushes failed!'
             Write-Host '   Data committed locally. Re-run script when network is back.'
-            Write-Host '   ========================================'
         }
+        Write-Host '   ========================================'
     } else {
         Pop-Location
         # commit 跳过，但可能有之前没推成功的积压 commit
@@ -159,21 +178,18 @@ try {
         if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) {
             Write-Host '   [PUSH] ' + $ahead + ' pending commit(s), pushing...'
             Push-Location $deploy
-            $pushOk = Push-WithRetry $gitExe
+            $results = @{}
+            $results['github'] = Push-ToRemote $gitExe 'origin' 'GitHub' 'https://zhongshanms.github.io/zhifa-dashboard/'
+            $results['server'] = Push-ToRemote $gitExe 'server' '宝塔服务器' 'https://dashboard.zhongshanzhiliang.top/'
             Pop-Location
-            if ($pushOk) {
-                Write-Host ''
-                Write-Host '   ========================================'
-                Write-Host '   [SUCCESS] Pending commits pushed!'
-                Write-Host '   https://zhongshanms.github.io/zhifa-dashboard/'
-                Write-Host '   ========================================'
+            Write-Host ''
+            Write-Host '   ========================================'
+            if ($results['github'] -and $results['server']) {
+                Write-Host '   [SUCCESS] Pending commits pushed to all destinations!'
             } else {
-                Write-Host ''
-                Write-Host '   ========================================'
-                Write-Host '   [FAILED] Push failed after 3 retries!'
-                Write-Host '   Check network and try again.'
-                Write-Host '   ========================================'
+                Write-Host '   [PARTIAL] Some destinations failed - check logs above'
             }
+            Write-Host '   ========================================'
         } else {
             Write-Host ''
             Write-Host '   ========================================'
