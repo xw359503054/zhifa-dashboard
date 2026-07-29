@@ -445,7 +445,8 @@ async function init() {
     for (var attempt = 0; attempt <= maxRetries && !fetchOk; attempt++) {
       try {
         if (attempt > 0) await new Promise(function(r) { setTimeout(r, 1500); });
-        var resp = await fetch(fetchUrl, {cache: 'no-store'});
+        var cacheUrl = fetchUrl + (fetchUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
+        var resp = await fetch(cacheUrl, {cache: 'no-store'});
         if (resp.ok) {
           var remoteData = await resp.json();
           // 兼容新格式 {meta:{_updateTime:...}, data:[...]} 和旧格式 [...]
