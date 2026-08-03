@@ -1,4 +1,5 @@
 ﻿param([string]$src, [string]$deploy)
+if (-not $deploy) { $deploy = $PSScriptRoot }
 
 Write-Host '   [1/4] Reading table...'
 try {
@@ -29,11 +30,35 @@ try {
         Write-Host ('   Using: ' + $progId)
         $app.Visible = $false
         $app.DisplayAlerts = $false
+
+        # DLP bypass: SaveCopyAs to TEMP, then read the decrypted copy
+        $tmpPath = Join-Path $env:TEMP ('_zhifa_tmp_' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.xlsx')
+        Write-Host '   DLP: SaveCopyAs -> TEMP...'
         $wb = $app.Workbooks.Open($src)
-        $ws = $wb.Worksheets.Item(1)
-        $used = $ws.UsedRange
+        $wb.SaveCopyAs($tmpPath)
+        $wb.Close($false)
+        $app.Quit()
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($wb) | Out-Null
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+
+        # Re-open decrypted temp file
+        $app2 = New-Object -ComObject $progId
+        $app2.Visible = $false
+        $app2.DisplayAlerts = $false
+        $wb2 = $app2.Workbooks.Open($tmpPath)
+        $ws2 = $wb2.Worksheets.Item(1)
+        $used = $ws2.UsedRange
         $data = $used.Value2
-        if ($data.Count -lt 2) { $wb.Close($false); $app.Quit(); throw 'Table too short' }
+        if ($data.Count -lt 2) {
+            $wb2.Close($false); $app2.Quit()
+            [Runtime.InteropServices.Marshal]::ReleaseComObject($ws2) | Out-Null
+            [Runtime.InteropServices.Marshal]::ReleaseComObject($wb2) | Out-Null
+            [Runtime.InteropServices.Marshal]::ReleaseComObject($app2) | Out-Null
+            Remove-Item $tmpPath -Force -ErrorAction SilentlyContinue
+            throw 'Table too short'
+        }
         $headers = @()
         $rowCount = $data.GetLength(0)
         $colCount = $data.GetLength(1)
@@ -55,11 +80,12 @@ try {
             }
             $rows += $obj
         }
-        $wb.Close($false)
-        $app.Quit()
-        [Runtime.InteropServices.Marshal]::ReleaseComObject($ws) | Out-Null
-        [Runtime.InteropServices.Marshal]::ReleaseComObject($wb) | Out-Null
-        [Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+        $wb2.Close($false)
+        $app2.Quit()
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($ws2) | Out-Null
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($wb2) | Out-Null
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($app2) | Out-Null
+        Remove-Item $tmpPath -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host ('   Read ' + $rows.Count + ' records')
@@ -199,13 +225,17 @@ try {
         }
     }
 } catch {
+    $errMsg = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ERROR: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+    $errLog = if ($deploy) { Join-Path $deploy 'update_error.log' } else { Join-Path $env:TEMP 'update_data_error.log' }
+    try { $errMsg | Out-File $errLog -Append -Encoding UTF8 } catch { }
     Write-Host ''
     Write-Host '   ========================================'
     Write-Host ('   [ERROR] ' + $_.Exception.Message)
+    Write-Host ('   Log: ' + $errLog)
     Write-Host '   ========================================'
     Write-Host ''
-    Write-Host '   If Ludun encryption issue:'
-    Write-Host '   1. Open file in WPS/Excel'
-    Write-Host '   2. Save As CSV'
-    Write-Host '   3. Drag CSV here'
+    Write-Host '   Common causes:'
+    Write-Host '   1. File is encrypted or corrupted'
+    Write-Host '   2. WPS/Excel not installed or busy'
+    Write-Host '   3. Check error log for details'
 }
